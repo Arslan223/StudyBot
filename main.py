@@ -2,7 +2,8 @@ from keys import TOKEN
 from time import sleep
 from threading import Thread
 from dateutil import tz as timezone
-from datetime import datetime, timedelta
+from datetime import datetime
+from time import time as unix_time
 import telebot
 import gdata
 import random
@@ -25,7 +26,7 @@ Markup = telebot.types.InlineKeyboardMarkup
 Button = telebot.types.InlineKeyboardButton
 Poll = telebot.types.Poll
 
-RNG = 60#*60*20
+RNG = 60 * 60 * 20
 MKD = "Markdown"
 time_stamp = "%H:%M %d.%m.%Y"
 tm = "%M"
@@ -42,7 +43,7 @@ content_types = ['text', 'audio', 'document', 'photo', 'sticker',
                  'supergroup_chat_created', 'channel_chat_created',
                  'migrate_to_chat_id', 'migrate_from_chat_id', 'pinned_message']
 group_template = {
-    "vote_limit": 6,
+    "score_limit": -20,
     "users": {},
     "channel": None,
     "tasks": []
@@ -52,6 +53,7 @@ user_in_group_template = {
     "t_zone": 0,
     "score": 0,
     "relax_day": 6,
+    "wake": 0,
     "tasks": {}
 }
 group_types = ["group", "supergroup"]
@@ -157,35 +159,80 @@ def show_menu(chat_id: str, user_id: str, edit=None):
 
 def watch_dog():
     while True:
+        # print(now_time().strftime(time_stamp))
+        sleep(10)
         try:
             data = gdata.load()
             for chat_id in data["groups"]:
                 data = gdata.load()
                 channel_id = f'@{data["groups"][chat_id]["channel"]}'
                 for user_id in data["groups"][chat_id]["users"]:
-                    user = data["groups"][chat_id]["users"][user_id]
-                    user_d = bot.get_chat_member(chat_id, user_id)
-                    tz = user["t_zone"]
-                    for task_id in user["tasks"]:
-                        task_obj = user["tasks"][task_id]
-                        time = datetime.strptime(task_obj["time"], time_stamp)
-                        now = datetime.strptime(now_time(tz).strftime(time_stamp), time_stamp)
-                        if now >= time:
-                            data["groups"][chat_id]["users"][user_id]["tasks"].pop(task_id)
-                            bot.send_message(channel_id, f"[{user_d.user.first_name}](tg://user?id={user_id}) "
-                                                         f"не выполнил свою задачу в срок!", parse_mode=MKD)
-                            score = data["groups"][chat_id]["users"][user_id]["score"]
-                            bot.send_message(user_id, f"Ваш рейтинг теперь равен _{score} - 2_ = _{score - 2}_",
-                                             parse_mode=MKD)
-                            data["groups"][chat_id]["users"][user_id]["score"] -= 2
+                    try:
+                        user = data["groups"][chat_id]["users"][user_id]
+                        user_d = bot.get_chat_member(chat_id, user_id)
+                        tz = user["t_zone"]
+                        score = data["groups"][chat_id]["users"][user_id]["score"]
+                        score_limit = data["groups"][chat_id]["score_limit"]
+                        if score < score_limit:
+                            bot.kick_chat_member(chat_id=chat_id, user_id=user_id,
+                                                 until_date=unix_time() + (7 * 24 * 60 * 60))
+                            data["groups"][chat_id]["users"].pop(user_id)
                             gdata.update(data)
                             data = gdata.load()
+
+                        for task_id in user["tasks"]:
+                            task_obj = user["tasks"][task_id]
+                            time = datetime.strptime(task_obj["time"], time_stamp)
+                            now = datetime.strptime(now_time(tz).strftime(time_stamp), time_stamp)
+                            if now >= time:
+                                data["groups"][chat_id]["users"][user_id]["tasks"].pop(task_id)
+                                bot.send_message(channel_id, f"[{user_d.user.first_name}](tg://user?id={user_id}) "
+                                                             f"не выполнил(а) свою задачу в срок!", parse_mode=MKD)
+                                score = data["groups"][chat_id]["users"][user_id]["score"]
+                                bot.send_message(user_id, f"Ваш рейтинг теперь равен _{score} - 2_ = _{score - 2}_",
+                                                 parse_mode=MKD)
+                                data["groups"][chat_id]["users"][user_id]["score"] -= 2
+                                gdata.update(data)
+                                data = gdata.load()
+
+                        # wake up check
+                        now = datetime.strptime(now_time(tz).strftime(time_stamp), time_stamp)
+                        if now.hour == 1:
+                            if int(user["relax_day"]) == now.weekday():
+                                data["groups"][chat_id]["users"][user_id]["wake"] = 2
+                            else:
+                                data["groups"][chat_id]["users"][user_id]["wake"] = 0
+                            gdata.update(data)
+                            data = gdata.load()
+                        if now.hour == 5:
+                            if not (data["groups"][chat_id]["users"][user_id]["wake"]):
+                                markup = Markup()
+                                markup.row(Button("Я встал", callback_data=f"waked{chat_id}"))
+                                msg = bot.send_message(user_id, "*Проверка сна*", reply_markup=markup, parse_mode=MKD)
+                                data["groups"][chat_id]["users"][user_id]["wake"] = msg.message_id
+                                gdata.update(data)
+                                data = gdata.load()
+                        if now.hour == 6:
+                            if data["groups"][chat_id]["users"][user_id]["wake"] not in (0, 2):
+                                message_id = data["groups"][chat_id]["users"][user_id]["wake"]
+                                bot.delete_message(chat_id=user_id, message_id=message_id)
+                                bot.send_message(channel_id, f"[{user_d.user.first_name}](tg://user?id={user_id}) "
+                                                             f"проспал(а)!", parse_mode=MKD)
+                                score = data["groups"][chat_id]["users"][user_id]["score"]
+                                bot.send_message(user_id, f"Ваш рейтинг теперь равен _{score} - 8_ = _{score - 8}_",
+                                                 parse_mode=MKD)
+                                data["groups"][chat_id]["users"][user_id]["score"] -= 8
+                            data["groups"][chat_id]["users"][user_id]["wake"] = 0
+                            gdata.update(data)
+                            data = gdata.load()
+                    except telebot.apihelper.ApiTelegramException as e:
+                        print(e)
+
                 for task_obj in data["groups"][chat_id]["tasks"]:
                     user_id = task_obj["user_id"]
                     channel_id = task_obj["channel_id"]
                     time = datetime.strptime(task_obj["time"], time_stamp)
                     tz = data["groups"][chat_id]["users"][user_id]["t_zone"]
-                    vote_limit = data["groups"][chat_id]["vote_limit"]
                     user_d = bot.get_chat_member(chat_id, user_id)
                     now = datetime.strptime(now_time(tz).strftime(time_stamp), time_stamp)
                     if (now - time).seconds >= RNG:
@@ -219,11 +266,6 @@ def watch_dog():
             sleep(5)
 
 
-
-
-
-
-
 def show_weekdays(chat_id, user_id, message_id):
     data = gdata.load()
     markup = Markup()
@@ -238,6 +280,21 @@ def show_weekdays(chat_id, user_id, message_id):
         callback_data=f"go_to_menu{chat_id}"
     ))
     bot.edit_message_text("Дни недели:", reply_markup=markup, chat_id=user_id, message_id=message_id)
+
+
+@bot.message_handler(
+    func=lambda message: True, commands=['help']
+)
+def on_help(message):
+    chat_id = str(message.chat.id)
+    bot.send_message(chat_id, "Список команд:\n"
+                              "/url - _выдача кнопки для перехода в личный кабинет (она общая для всей группы)_\n"
+                              "/channel name - _привязка канала _`name`_ к боту_\n"
+                              "/rate ∆r - _изменение рейтинга пользователя на ∆r."
+                              "Только в ответ на сообщение пользователя, только для админов._\n"
+                              "/change_limit newlimit - _Изменение лимита, при котором пользователь будет забанен_\n"
+                              "*осторожно с этой командой, вспомните, отрицательный ли вы хотите лимит.\n*",
+                     parse_mode=MKD)
 
 
 @bot.message_handler(
@@ -264,7 +321,82 @@ def on_channel_command(message):
 
 
 @bot.message_handler(
-    func=lambda message: message.chat.type in group_types, content_types=content_types, commands=['url']
+    func=lambda message: message.chat.type in group_types, commands=['rating']
+)
+def on_rating(message):
+    chat_id = str(message.chat.id)
+    user_id = str(message.from_user.id)
+    pre_update(chat_id, user_id)
+    data = gdata.load()
+    message_text = "*Топ ботающих:*\n"
+    users = [[int(data["groups"][chat_id]["users"][str(i)]["score"]), bot.get_chat_member(chat_id, str(i)).user]
+             for i in data["groups"][chat_id]["users"]]
+    medals = ["🥇", "🥈", "🥉"]
+    users.sort(key=lambda a: a[0])
+    users.reverse()
+    for i in range(len(users)):
+        if i < 3:
+            message_text += f"{medals[i]} {users[i][1].first_name} : *{str(users[i][0])}* ⭐️\n"
+    bot.send_message(chat_id, message_text, parse_mode=MKD)
+
+
+@bot.message_handler(
+    func=lambda message: message.chat.type in group_types, commands=['change_limit']
+)
+def on_change_score_limit(message):
+    chat_id = str(message.chat.id)
+    user_id = str(message.from_user.id)
+    try:
+        new_limit = int(message.text[14:])
+        admins = [str(member.user.id) for member in bot.get_chat_administrators(chat_id)]
+        # admins.append('316490607')
+        admins.append('1087968824')
+        if user_id in admins:
+            data = gdata.load()
+            data["groups"][chat_id]["score_limit"] = new_limit
+            bot.reply_to(message, f"[{message.from_user.first_name}](tg://user?id={user_id})* "
+                                  f"изменил лимит на {str(new_limit)}*")
+            gdata.update(data)
+    except ValueError:
+        pass
+
+
+@bot.message_handler(
+    func=lambda message: message.chat.type in group_types, commands=['rate']
+)
+def on_rate(message):
+    chat_id = str(message.chat.id)
+    user_id = str(message.from_user.id)
+    try:
+        delta_rate = int(message.text[6:])
+        admins = [str(member.user.id) for member in bot.get_chat_administrators(chat_id)]
+        # admins.append('316490607')
+        admins.append('1087968824')
+        # print(message.reply_to_message, user_id in admins)
+        if message.reply_to_message and user_id in admins:
+            data = gdata.load()
+            user_t_id = str(message.reply_to_message.from_user.id)
+            if user_t_id in data["groups"][chat_id]["users"]:
+                score = data["groups"][chat_id]["users"][user_t_id]["score"]
+                data["groups"][chat_id]["users"][user_t_id]["score"] += delta_rate
+                gdata.update(data)
+                bot.send_message(user_t_id, f"Ваш рейтинг теперь равен "
+                                            f"_{score} {'+' if delta_rate >= 0 else '-'} {str(abs(delta_rate))}_ = "
+                                            f"_{score + delta_rate}_\n", parse_mode=MKD)
+                bot.reply_to(message.reply_to_message, f"[{message.from_user.first_name}](tg://user?id={user_id}) "
+                                                       f"изменил рейтинг "
+                                                       f"[{message.reply_to_message.from_user.first_name}]"
+                                                       f"(tg://user?id={user_t_id}) "
+                                                       f"на *{str(delta_rate)}*.\n"
+                                                       f"Теперь его(ее) рейтинг = *{score + delta_rate}*",
+                             parse_mode=MKD)
+                bot.delete_message(chat_id=chat_id, message_id=message.message_id)
+    except ValueError:
+        pass
+
+
+@bot.message_handler(
+    func=lambda message: message.chat.type in group_types, commands=['url']
 )
 def on_url(message):
     chat_id = str(message.chat.id)
@@ -311,6 +443,18 @@ def on_change_relax(query):
     chat_id = query.data[11:]
     user_id = str(query.from_user.id)
     show_weekdays(chat_id, user_id, query.message.message_id)
+
+
+@bot.callback_query_handler(
+    func=lambda query: query.data.startswith("waked")
+)
+def on_change_relax_day(query):
+    chat_id = query.data[5:]
+    user_id = str(query.from_user.id)
+    data = gdata.load()
+    data["groups"][chat_id]["users"][user_id]["wake"] = 2
+    gdata.update(data)
+    bot.delete_message(chat_id=user_id, message_id=query.message.message_id)
 
 
 @bot.callback_query_handler(
