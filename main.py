@@ -1,4 +1,6 @@
 from keys import TOKEN
+from time import sleep
+from threading import Thread
 from dateutil import tz as timezone
 from datetime import datetime, timedelta
 import telebot
@@ -23,14 +25,16 @@ Markup = telebot.types.InlineKeyboardMarkup
 Button = telebot.types.InlineKeyboardButton
 Poll = telebot.types.Poll
 
+RNG = 60#*60*20
 MKD = "Markdown"
 time_stamp = "%H:%M %d.%m.%Y"
 tm = "%M"
 th = "%H"
 td = "%d"
 
-# {"groups": {}, "users": {}, "tasks": []}
+# {"groups": {}, "users": {}}
 
+weekdays = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
 content_types = ['text', 'audio', 'document', 'photo', 'sticker',
                  'video', 'video_note', 'voice', 'location', 'contact',
                  'new_chat_members', 'left_chat_member', 'new_chat_title',
@@ -46,6 +50,8 @@ group_template = {
 user_in_group_template = {
     "punish": False,
     "t_zone": 0,
+    "score": 0,
+    "relax_day": 6,
     "tasks": {}
 }
 group_types = ["group", "supergroup"]
@@ -74,6 +80,8 @@ def decorate_channel_link(group_id: str):
 
 
 def pre_update(group_id: str, user_id: str):
+    user_id = str(user_id)
+    group_id = str(group_id)
     data = gdata.load()
 
     global group_template
@@ -81,10 +89,12 @@ def pre_update(group_id: str, user_id: str):
     if not (group_id in data["groups"]):
         data["groups"].update({group_id: group_template})
 
-    if not (user_id in data["groups"][group_id]["users"]):
+    if not (user_id in data["groups"][group_id]["users"].keys()):
+        print(data["groups"][group_id]["users"].keys(), type(user_id),
+              user_id in data["groups"][group_id]["users"].keys())
         data["groups"][group_id]["users"].update({user_id: user_in_group_template})
 
-        if not (user_id in data["users"]):
+        if not (user_id in data["users"].keys()):
             data["users"].update({user_id: [group_id]})
 
         if not (group_id in data["users"][user_id]):
@@ -95,7 +105,7 @@ def pre_update(group_id: str, user_id: str):
     return 0
 
 
-def show_menu(chat_id: str, user_id: str):
+def show_menu(chat_id: str, user_id: str, edit=None):
     try:
         pre_update(chat_id, user_id)
         data = gdata.load()
@@ -103,27 +113,131 @@ def show_menu(chat_id: str, user_id: str):
         btn_add_task = Button("Добавить задачу", callback_data=f"addtask{chat_id}")
         btn_show_tasks = Button("Список задач", callback_data=f"tasks{chat_id}")
         btn_change_time_zone = Button("Изменить часовой пояс", callback_data=f"changetz{chat_id}")
+        btn_change_relax = Button("Изменить выходной день", callback_data=f"changerelax{chat_id}")
         btn_to_channel = Button("Ссылка на канал", url=decorate_channel_link(chat_id))
         markup.row(btn_add_task)
         markup.row(btn_show_tasks)
         markup.row(btn_change_time_zone)
+        markup.row(btn_change_relax)
         markup.row(btn_to_channel)
         tz = str(data["groups"][chat_id]["users"][user_id]["t_zone"])
-        if data["groups"][chat_id]["users"][user_id]["punish"]:
-            bot.send_message(user_id, f"Здравствуйте!\n"
-                                      f"Ваш часовой пояс - `МСК{f'+{tz}' if int(tz) >= 0 else tz}\n`"
-                                      f"У вас *есть* действующее наказание!\n_Доступ к меню недоступен..._",
-                             parse_mode=MKD)
+        score = str(data["groups"][chat_id]["users"][user_id]["score"])
+        relax_day = str(data["groups"][chat_id]["users"][user_id]["relax_day"])
+        have_punish_text = f"Здравствуйте!\n" \
+                           f"Ваш часовой пояс - `МСК{f'+{tz}' if int(tz) >= 0 else tz}\n`" \
+                           f"Ваш рейтинг: `{score}`\n" \
+                           f"Ваш выходной: `{weekdays[int(relax_day)]}`\n" \
+                           f"У вас *есть* действующее наказание!\n_Доступ к меню недоступен..._"
+        have_no_punish_text = f"Здравствуйте!\n" \
+                              f"Ваш часовой пояс - `МСК{f'+{tz}' if int(tz) >= 0 else tz}\n`" \
+                              f"Ваш рейтинг: `{score}`\n" \
+                              f"Ваш выходной: `{weekdays[int(relax_day)]}`\n" \
+                              f"У вас нет действующих наказаний."
+        if edit:
+            if data["groups"][chat_id]["users"][user_id]["punish"]:
+                bot.edit_message_text(have_punish_text,
+                                      chat_id=user_id,
+                                      message_id=edit,
+                                      parse_mode=MKD)
+            else:
+                bot.edit_message_text(have_no_punish_text,
+                                      chat_id=user_id,
+                                      message_id=edit,
+                                      reply_markup=markup,
+                                      parse_mode=MKD)
         else:
-            bot.send_message(user_id, f"Здравствуйте!\n"
-                                      f"Ваш часовой пояс - `МСК{f'+{tz}' if int(tz) >= 0 else tz}\n`"
-                                      f"У вас нет действующих наказаний.", reply_markup=markup, parse_mode=MKD)
+            if data["groups"][chat_id]["users"][user_id]["punish"]:
+                bot.send_message(user_id, have_punish_text,
+                                 parse_mode=MKD)
+            else:
+                bot.send_message(user_id, have_no_punish_text, reply_markup=markup, parse_mode=MKD)
     except ChannelLinkError:
         bot.send_message(user_id, f"Ошибка! К вашей группе не привязан канал или у бота нет прав на канале...")
 
 
 def watch_dog():
-    pass
+    while True:
+        try:
+            data = gdata.load()
+            for chat_id in data["groups"]:
+                data = gdata.load()
+                channel_id = f'@{data["groups"][chat_id]["channel"]}'
+                for user_id in data["groups"][chat_id]["users"]:
+                    user = data["groups"][chat_id]["users"][user_id]
+                    user_d = bot.get_chat_member(chat_id, user_id)
+                    tz = user["t_zone"]
+                    for task_id in user["tasks"]:
+                        task_obj = user["tasks"][task_id]
+                        time = datetime.strptime(task_obj["time"], time_stamp)
+                        now = datetime.strptime(now_time(tz).strftime(time_stamp), time_stamp)
+                        if now >= time:
+                            data["groups"][chat_id]["users"][user_id]["tasks"].pop(task_id)
+                            bot.send_message(channel_id, f"[{user_d.user.first_name}](tg://user?id={user_id}) "
+                                                         f"не выполнил свою задачу в срок!", parse_mode=MKD)
+                            score = data["groups"][chat_id]["users"][user_id]["score"]
+                            bot.send_message(user_id, f"Ваш рейтинг теперь равен _{score} - 2_ = _{score - 2}_",
+                                             parse_mode=MKD)
+                            data["groups"][chat_id]["users"][user_id]["score"] -= 2
+                            gdata.update(data)
+                            data = gdata.load()
+                for task_obj in data["groups"][chat_id]["tasks"]:
+                    user_id = task_obj["user_id"]
+                    channel_id = task_obj["channel_id"]
+                    time = datetime.strptime(task_obj["time"], time_stamp)
+                    tz = data["groups"][chat_id]["users"][user_id]["t_zone"]
+                    vote_limit = data["groups"][chat_id]["vote_limit"]
+                    user_d = bot.get_chat_member(chat_id, user_id)
+                    now = datetime.strptime(now_time(tz).strftime(time_stamp), time_stamp)
+                    if (now - time).seconds >= RNG:
+                        print(channel_id)
+                        poll = bot.stop_poll(chat_id=channel_id, message_id=task_obj["poll_id"])
+                        if poll.options[1].voter_count > poll.options[0].voter_count:
+                            bot.send_message(channel_id, f"[{user_d.user.first_name}](tg://user?id={user_id}) "
+                                                         f"обманул партию и не выполнил задачу!", parse_mode=MKD)
+                            score = data["groups"][chat_id]["users"][user_id]["score"]
+                            bot.send_message(user_id, f"Ваш рейтинг теперь равен _{score} - 4_ = _{score - 4}_",
+                                             parse_mode=MKD)
+                            data["groups"][chat_id]["users"][user_id]["score"] -= 4
+                            gdata.update(data)
+                            data = gdata.load()
+                        else:
+                            score = data["groups"][chat_id]["users"][user_id]["score"]
+                            bot.send_message(user_id, f"Ваш рейтинг теперь равен _{score} + 1_ = _{score + 1}_\n"
+                                                      f"(за успешное выполнение задачи)", parse_mode=MKD)
+                            data["groups"][chat_id]["users"][user_id]["score"] += 1
+                            gdata.update(data)
+                            data = gdata.load()
+                        bot.delete_message(chat_id=channel_id, message_id=task_obj["poll_id"])
+                        bot.delete_message(chat_id=channel_id, message_id=task_obj["photo_id"])
+                        data["groups"][chat_id]["tasks"].remove(task_obj)
+                        gdata.update(data)
+                        data = gdata.load()
+                        show_menu(chat_id, user_id)
+            sleep(5)
+        except RuntimeError as e:
+            print(e)
+            sleep(5)
+
+
+
+
+
+
+
+def show_weekdays(chat_id, user_id, message_id):
+    data = gdata.load()
+    markup = Markup()
+    for i in range(7):
+        this_day = int(data["groups"][chat_id]["users"][user_id]["relax_day"]) == i
+        markup.row(Button(
+            f"{'• ' if this_day else ''}{weekdays[i]}{' •' if this_day else ''}",
+            callback_data=f"change_day{str(i)}:{chat_id}"
+        ))
+    markup.row(Button(
+        f"🔙",
+        callback_data=f"go_to_menu{chat_id}"
+    ))
+    bot.edit_message_text("Дни недели:", reply_markup=markup, chat_id=user_id, message_id=message_id)
 
 
 @bot.message_handler(
@@ -140,10 +254,13 @@ def on_channel_command(message):
         data["groups"][chat_id]["channel"] = channel_name
         gdata.update(data)
         bot.reply_to(message, "Ссылка на канал успешно обновлена!")
+        decorate_channel_link(chat_id)
         return 0
     except telebot.apihelper.ApiTelegramException:
         bot.reply_to(message, "Такого канала не существует!")
         return 1
+    except ChannelLinkError:
+        bot.reply_to(message, "Пожалуйста, дайте боту права админа на канале!")
 
 
 @bot.message_handler(
@@ -185,6 +302,36 @@ def on_change_tz(query):
     msg = bot.send_message(user_id, "Введите новый часовой пояс в формате `МСК+x`.\n_Примеры:_\n`МСК+2`\n`МСК-1`",
                            parse_mode=MKD)
     bot.register_next_step_handler(msg, on_new_tz, _chat_id=chat_id)
+
+
+@bot.callback_query_handler(
+    func=lambda query: query.data.startswith("changerelax")
+)
+def on_change_relax(query):
+    chat_id = query.data[11:]
+    user_id = str(query.from_user.id)
+    show_weekdays(chat_id, user_id, query.message.message_id)
+
+
+@bot.callback_query_handler(
+    func=lambda query: query.data.startswith("change_day")
+)
+def on_change_relax_day(query):
+    new_day, chat_id = map(str, query.data[10:].split(":"))
+    user_id = str(query.from_user.id)
+    data = gdata.load()
+    data["groups"][chat_id]["users"][user_id]["relax_day"] = new_day
+    gdata.update(data)
+    show_weekdays(chat_id, user_id, query.message.message_id)
+
+
+@bot.callback_query_handler(
+    func=lambda query: query.data.startswith("go_to_menu")
+)
+def return_to_menu(query):
+    chat_id = query.data[10:]
+    user_id = str(query.from_user.id)
+    show_menu(chat_id, user_id, edit=query.message.message_id)
 
 
 def on_new_tz(message, _chat_id):
@@ -265,7 +412,8 @@ def add_task(message, _chat_id, task_name, task_description, task_proof_descript
     user_id = str(message.from_user.id)
     if message.text != "0":
         data = gdata.load()
-        task_id = gen_id()
+        task_id = str(gen_id())
+        print(data["groups"][chat_id]["users"][user_id]["tasks"])
         data["groups"][chat_id]["users"][user_id]["tasks"].update({
             task_id: {
                 "task_name": task_name,
@@ -274,9 +422,6 @@ def add_task(message, _chat_id, task_name, task_description, task_proof_descript
                 "time": time
             }
         })
-        data["tasks"].append(
-            f'{chat_id}:{user_id}:{str(task_id)}'
-        )
         gdata.update(data)
         bot.send_message(user_id, "Успешно!")
     else:
@@ -295,10 +440,10 @@ def on_show_tasks(query):
     if tasks:
         bot.send_message(user_id, f"*Ваши задачи:*", parse_mode=MKD)
         for task_number in tasks:
-            task = tasks[task_number]
-            task_text = f"*Название:*\n{task['task_name']}\n\n" \
-                        f"*Описание:*_\n{task['task_description']}_\n\n" \
-                        f"*Дедлайн:*\n`{task['time']}`"
+            task_obj = tasks[task_number]
+            task_text = f"*Название:*\n{task_obj['task_name']}\n\n" \
+                        f"*Описание:*_\n{task_obj['task_description']}_\n\n" \
+                        f"*Дедлайн:*\n`{task_obj['time']}`"
             markup = Markup()
             btn = Button("Выполнено", callback_data=f"completed{chat_id}:{str(task_number)}")
             markup.row(btn)
@@ -319,19 +464,18 @@ def on_task_complete(query):
     data = gdata.load()
     tasks = data["groups"][chat_id]["users"][user_id]["tasks"]
     try:
-        task = tasks[task_number]
-        bot.send_message(user_id, f"Формат доказательства выполнения задачи:\n_{task['task_proof_description']}_",
+        task_obj = tasks[task_number]
+        bot.send_message(user_id, f"Формат доказательства выполнения задачи:\n_{task_obj['task_proof_description']}_",
                          parse_mode=MKD)
         msg = bot.send_message(user_id, f"Отправьте фотографию-доказательство выполнения задачи")
-        bot.register_next_step_handler(msg, on_getting_proof, _chat_id=chat_id, _task=task, task_number=task_number)
+        bot.register_next_step_handler(msg, on_getting_proof, _chat_id=chat_id, _task=task_obj, task_number=task_number)
     except KeyError:
-        bot.send_message(user_id, "Такой задачи больше не существует...")
-        show_menu(chat_id, user_id)
+        bot.send_message(user_id, "Ложки не существует, нео...")
 
 
 def on_getting_proof(message, _chat_id, _task, task_number):
     chat_id = _chat_id
-    task = _task
+    task_obj = _task
     user_id = str(message.from_user.id)
     data = gdata.load()
     channel_id = "@" + data["groups"][chat_id]["channel"]
@@ -341,16 +485,17 @@ def on_getting_proof(message, _chat_id, _task, task_number):
         raise NotAPhotoError
 
     file_id = message.photo[0].file_id
-    p_msg = bot.send_photo(channel_id, caption=f"*Название:*\n{task['task_name']}\n\n"
-                                               f"*Описание:*_\n{task['task_description']}_\n\n"
-                                               f"*Доказательство:\n*_{task['task_proof_description']}_",
+    p_msg = bot.send_photo(channel_id, caption=f"*Название:*\n{task_obj['task_name']}\n\n"
+                                               f"*Описание:*_\n{task_obj['task_description']}_\n\n"
+                                               f"*Доказательство:\n*_{task_obj['task_proof_description']}_",
                            photo=file_id, parse_mode=MKD)
     poll = bot.send_poll(channel_id, question="\/\/\/", options=['👍', '👎'])
     data["groups"][chat_id]["tasks"].append({
         "poll_id": poll.message_id,
         "photo_id": p_msg.message_id,
         "time": now_time(t_zone=int(tz)).strftime(time_stamp),
-        "user_id": user_id
+        "user_id": user_id,
+        "channel_id": str(p_msg.chat.id)
     })
     data["groups"][chat_id]["users"][user_id]["tasks"].pop(task_number)
     gdata.update(data)
@@ -359,4 +504,6 @@ def on_getting_proof(message, _chat_id, _task, task_number):
 
 
 if __name__ == "__main__":
+    task = Thread(target=watch_dog)
+    task.start()
     bot.polling(none_stop=True)
