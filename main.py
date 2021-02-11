@@ -597,7 +597,8 @@ def on_show_tasks(query):
                         f"*Дедлайн:*\n`{task_obj['time']}`"
             markup = Markup()
             btn = Button("Выполнено", callback_data=f"completed{chat_id}:{str(task_number)}")
-            markup.row(btn)
+            btn1 = Button("Удалить", callback_data=f"delete{chat_id}:{str(task_number)}")
+            markup.row(btn, btn1)
             bot.send_message(user_id, task_text, reply_markup=markup, parse_mode=MKD)
     else:
         markup = Markup()
@@ -620,6 +621,26 @@ def on_task_complete(query):
                          parse_mode=MKD)
         msg = bot.send_message(user_id, f"Отправьте фотографию-доказательство выполнения задачи")
         bot.register_next_step_handler(msg, on_getting_proof, _chat_id=chat_id, _task=task_obj, task_number=task_number)
+    except KeyError:
+        bot.send_message(user_id, "Ложки не существует, нео...")
+
+
+@bot.callback_query_handler(
+    func=lambda query: query.data.startswith("delete")
+)
+def on_task_complete(query):
+    chat_id, task_number = map(str, query.data[6:].split(":"))
+    user_id = str(query.from_user.id)
+    data = gdata.load()
+    tasks = data["groups"][chat_id]["users"][user_id]["tasks"]
+    try:
+        bot.answer_callback_query(query.id, text="С вас будут списаны 2 единицы рейтинга..", show_alert=True)
+        data["groups"][chat_id]["users"][user_id]["tasks"].pop(task_number)
+        score = data["groups"][chat_id]["users"][user_id]["score"]
+        bot.send_message(user_id, f"Ваш рейтинг теперь равен _{score} - 2_ = _{score - 2}_\n"
+                                  f"_(за удаление задачи)_", parse_mode=MKD)
+        data["groups"][chat_id]["users"][user_id]["score"] -= 2
+        gdata.update(data)
     except KeyError:
         bot.send_message(user_id, "Ложки не существует, нео...")
 
