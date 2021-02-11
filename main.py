@@ -292,8 +292,8 @@ def on_help(message):
                               "/channel name - _привязка канала _`name`_ к боту_\n"
                               "/rate ∆r - _изменение рейтинга пользователя на ∆r."
                               "Только в ответ на сообщение пользователя, только для админов._\n"
-                              "/change_limit newlimit - _Изменение лимита, при котором пользователь будет забанен_\n"
-                              "*осторожно с этой командой, вспомните, отрицательный ли вы хотите лимит.\n*",
+                              "/changelimit newlimit - _Изменение лимита, при котором пользователь будет забанен_\n"
+                              "*осторожно с этой командой, вспомните, отрицательный ли вы хотите лимит.*\n",
                      parse_mode=MKD)
 
 
@@ -341,13 +341,13 @@ def on_rating(message):
 
 
 @bot.message_handler(
-    func=lambda message: message.chat.type in group_types, commands=['change_limit']
+    func=lambda message: message.chat.type in group_types, commands=['changelimit']
 )
 def on_change_score_limit(message):
     chat_id = str(message.chat.id)
     user_id = str(message.from_user.id)
     try:
-        new_limit = int(message.text[14:])
+        new_limit = int(message.text[13:])
         admins = [str(member.user.id) for member in bot.get_chat_administrators(chat_id)]
         # admins.append('316490607')
         admins.append('1087968824')
