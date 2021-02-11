@@ -35,7 +35,7 @@ td = "%d"
 
 # {"groups": {}, "users": {}}
 
-weekdays = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
+weekdays = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье", "Нет выходного"]
 content_types = ['text', 'audio', 'document', 'photo', 'sticker',
                  'video', 'video_note', 'voice', 'location', 'contact',
                  'new_chat_members', 'left_chat_member', 'new_chat_title',
@@ -269,7 +269,7 @@ def watch_dog():
 def show_weekdays(chat_id, user_id, message_id):
     data = gdata.load()
     markup = Markup()
-    for i in range(7):
+    for i in range(8):
         this_day = int(data["groups"][chat_id]["users"][user_id]["relax_day"]) == i
         markup.row(Button(
             f"{'• ' if this_day else ''}{weekdays[i]}{' •' if this_day else ''}",
@@ -337,6 +337,8 @@ def on_rating(message):
     for i in range(len(users)):
         if i < 3:
             message_text += f"{medals[i]} {users[i][1].first_name} : *{str(users[i][0])}* ⭐️\n"
+        else:
+            message_text += f"{users[i][1].first_name} : *{str(users[i][0])}* ⭐️\n"
     bot.send_message(chat_id, message_text, parse_mode=MKD)
 
 
@@ -538,7 +540,12 @@ def on_task_proof_description(message, _chat_id, task_name, task_description):
 def on_datetime(message, _chat_id, task_name, task_description, task_proof_description):
     chat_id = _chat_id
     user_id = str(message.from_user.id)
-    time = datetime.strptime(message.text, time_stamp).strftime(time_stamp)
+    try:
+        time = datetime.strptime(message.text, time_stamp).strftime(time_stamp)
+    except Exception as e:
+        bot.send_message(user_id, "*Неправильно введены данные!*\nВозврат в меню...")
+        show_menu(chat_id, user_id)
+        return 1
     msg = bot.send_message(user_id, "*Проверьте введенные данные.*\n"
                                     "Введите `0` если желаете отменить дейстия\n"
                                     "Введите любой другой текст для продолжения...",
@@ -650,4 +657,10 @@ def on_getting_proof(message, _chat_id, _task, task_number):
 if __name__ == "__main__":
     task = Thread(target=watch_dog)
     task.start()
-    bot.polling(none_stop=True)
+    while True:
+        try:
+            bot.polling(none_stop=True)
+        except Exception as e:
+            bot.send_message(316490607, e)
+            sleep(1)
+
