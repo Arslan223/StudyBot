@@ -26,7 +26,7 @@ Markup = telebot.types.InlineKeyboardMarkup
 Button = telebot.types.InlineKeyboardButton
 Poll = telebot.types.Poll
 
-RNG = 60 * 60 * 20
+RNG = 60 * 60 * 5
 MKD = "Markdown"
 time_stamp = "%H:%M %d.%m.%Y"
 tm = "%M"
@@ -237,31 +237,35 @@ def watch_dog():
                     now = datetime.strptime(now_time(tz).strftime(time_stamp), time_stamp)
                     if (now - time).seconds >= RNG:
                         print(channel_id)
-                        poll = bot.stop_poll(chat_id=channel_id, message_id=task_obj["poll_id"])
-                        if poll.options[1].voter_count > poll.options[0].voter_count:
-                            bot.send_message(channel_id, f"[{user_d.user.first_name}](tg://user?id={user_id}) "
-                                                         f"обманул партию и не выполнил задачу!", parse_mode=MKD)
-                            score = data["groups"][chat_id]["users"][user_id]["score"]
-                            bot.send_message(user_id, f"Ваш рейтинг теперь равен _{score} - 4_ = _{score - 4}_",
-                                             parse_mode=MKD)
-                            data["groups"][chat_id]["users"][user_id]["score"] -= 4
+                        try:
+                            poll = bot.stop_poll(chat_id=channel_id, message_id=task_obj["poll_id"])
+                            if poll.options[1].voter_count > poll.options[0].voter_count:
+                                bot.send_message(channel_id, f"[{user_d.user.first_name}](tg://user?id={user_id}) "
+                                                             f"обманул партию и не выполнил задачу!", parse_mode=MKD)
+                                score = data["groups"][chat_id]["users"][user_id]["score"]
+                                bot.send_message(user_id, f"Ваш рейтинг теперь равен _{score} - 4_ = _{score - 4}_",
+                                                 parse_mode=MKD)
+                                data["groups"][chat_id]["users"][user_id]["score"] -= 4
+                                gdata.update(data)
+                                data = gdata.load()
+                            else:
+                                score = data["groups"][chat_id]["users"][user_id]["score"]
+                                bot.send_message(user_id, f"Ваш рейтинг теперь равен _{score} + 1_ = _{score + 1}_\n"
+                                                          f"(за успешное выполнение задачи)", parse_mode=MKD)
+                                data["groups"][chat_id]["users"][user_id]["score"] += 1
+                                gdata.update(data)
+                                data = gdata.load()
+                            bot.delete_message(chat_id=channel_id, message_id=task_obj["poll_id"])
+                            bot.delete_message(chat_id=channel_id, message_id=task_obj["photo_id"])
+                            data["groups"][chat_id]["tasks"].remove(task_obj)
                             gdata.update(data)
                             data = gdata.load()
-                        else:
-                            score = data["groups"][chat_id]["users"][user_id]["score"]
-                            bot.send_message(user_id, f"Ваш рейтинг теперь равен _{score} + 1_ = _{score + 1}_\n"
-                                                      f"(за успешное выполнение задачи)", parse_mode=MKD)
-                            data["groups"][chat_id]["users"][user_id]["score"] += 1
+                        except telebot.apihelper.ApiTelegramException:
+                            data["groups"][chat_id]["tasks"].remove(task_obj)
                             gdata.update(data)
-                            data = gdata.load()
-                        bot.delete_message(chat_id=channel_id, message_id=task_obj["poll_id"])
-                        bot.delete_message(chat_id=channel_id, message_id=task_obj["photo_id"])
-                        data["groups"][chat_id]["tasks"].remove(task_obj)
-                        gdata.update(data)
-                        data = gdata.load()
-                        show_menu(chat_id, user_id)
+
             sleep(5)
-        except RuntimeError as e:
+        except RuntimeError  as e:
             print(e)
             sleep(5)
 
@@ -359,6 +363,66 @@ def on_change_score_limit(message):
             bot.reply_to(message, f"[{message.from_user.first_name}](tg://user?id={user_id})* "
                                   f"изменил лимит на {str(new_limit)}*")
             gdata.update(data)
+    except ValueError:
+        pass
+
+
+@bot.message_handler(
+    func=lambda message: message.chat.type in group_types, commands=['reset']
+)
+def on_change_score_limit(message):
+    chat_id = str(message.chat.id)
+    user_id = str(message.from_user.id)
+    try:
+        admins = [str(member.user.id) for member in bot.get_chat_administrators(chat_id)]
+        # admins.append('316490607')
+        admins.append('1087968824')
+        if user_id in admins:
+            markup = Markup()
+            markup.row(
+                Button("Да", callback_data=f"resty{chat_id}"),
+                Button("Нет", callback_data=f"restn{chat_id}")
+            )
+            bot.reply_to(message, "Вы уверены, что желаете *сбросить* рейтинг группы?",
+                         reply_markup=markup, parse_mode=MKD)
+    except ValueError:
+        pass
+
+
+@bot.callback_query_handler(
+    func=lambda query: query.data.startswith("rest")
+)
+def on_change_relax(query):
+    chat_id = query.data[5:]
+    ans = query.data[4:5] == 'y'
+    user_id = str(query.from_user.id)
+    try:
+        admins = [str(member.user.id) for member in bot.get_chat_administrators(chat_id)]
+        # admins.append('316490607')
+        admins.append('1087968824')
+        if user_id in admins:
+            if ans:
+                data = gdata.load()
+                for user_t_id in data["groups"][chat_id]["users"]:
+                    score = data["groups"][chat_id]["users"][user_t_id]["score"]
+                    data["groups"][chat_id]["users"][user_t_id]["score"] = 0
+                    gdata.update(data)
+                try:
+                    bot.edit_message_text(text="*Сброшено!*", chat_id=query.message.chat.id,
+                                          message_id=query.message.message_id,
+                                          reply_markup=None, parse_mode=MKD)
+                except telebot.apihelper.ApiTelegramException:
+                    pass
+            else:
+                try:
+                    bot.delete_message(chat_id=query.message.chat.id, message_id=query.message.message_id)
+                    bot.delete_message(chat_id=query.message.chat.id,
+                                       message_id=query.message.reply_to_message.message_id)
+                except telebot.apihelper.ApiTelegramException:
+                    pass
+
+
+
     except ValueError:
         pass
 
@@ -620,8 +684,13 @@ def on_task_complete(query):
         bot.send_message(user_id, f"Формат доказательства выполнения задачи:\n_{task_obj['task_proof_description']}_",
                          parse_mode=MKD)
         msg = bot.send_message(user_id, f"Отправьте фотографию-доказательство выполнения задачи")
-        bot.register_next_step_handler(msg, on_getting_proof, _chat_id=chat_id, _task=task_obj, task_number=task_number)
+        bot.register_next_step_handler(msg, on_getting_proof, _chat_id=chat_id, _task=task_obj, task_number=task_number,
+                                       message_to_d_id=query.message.message_id)
     except KeyError:
+        try:
+            bot.delete_message(query.message.chat.id, query.message.message_id)
+        except telebot.apihelper.ApiTelegramException:
+            pass
         bot.send_message(user_id, "Ложки не существует, нео...")
 
 
@@ -634,18 +703,30 @@ def on_task_complete(query):
     data = gdata.load()
     tasks = data["groups"][chat_id]["users"][user_id]["tasks"]
     try:
-        bot.answer_callback_query(query.id, text="С вас будут списаны 2 единицы рейтинга..", show_alert=True)
+        tasktime = datetime.strptime(tasks[task_number]["time"], time_stamp)
+        tz = data["groups"][chat_id]["users"][user_id]["t_zone"]
+        now = datetime.strptime(now_time(tz).strftime(time_stamp), time_stamp)
         data["groups"][chat_id]["users"][user_id]["tasks"].pop(task_number)
-        score = data["groups"][chat_id]["users"][user_id]["score"]
-        bot.send_message(user_id, f"Ваш рейтинг теперь равен _{score} - 2_ = _{score - 2}_\n"
-                                  f"_(за удаление задачи)_", parse_mode=MKD)
-        data["groups"][chat_id]["users"][user_id]["score"] -= 2
+        if (tasktime - now).seconds < 60*60:
+            bot.answer_callback_query(query.id, text="До дедлайна меньше часа. "
+                                                     "С вас будут списаны 2 единицы рейтинга..", show_alert=True)
+            data["groups"][chat_id]["users"][user_id]["tasks"].pop(task_number)
+            score = data["groups"][chat_id]["users"][user_id]["score"]
+            bot.send_message(user_id, f"Ваш рейтинг теперь равен _{score} - 2_ = _{score - 2}_\n"
+                                      f"_(за удаление задачи)_", parse_mode=MKD)
+            data["groups"][chat_id]["users"][user_id]["score"] -= 2
+        else:
+            bot.answer_callback_query(query.id, text="Задача успешно удалена!", show_alert=False)
         gdata.update(data)
     except KeyError:
         bot.send_message(user_id, "Ложки не существует, нео...")
+    try:
+        bot.delete_message(query.message.chat.id, query.message.message_id)
+    except telebot.apihelper.ApiTelegramException:
+        pass
 
 
-def on_getting_proof(message, _chat_id, _task, task_number):
+def on_getting_proof(message, _chat_id, _task, task_number, message_to_d_id):
     chat_id = _chat_id
     task_obj = _task
     user_id = str(message.from_user.id)
@@ -671,17 +752,22 @@ def on_getting_proof(message, _chat_id, _task, task_number):
     })
     data["groups"][chat_id]["users"][user_id]["tasks"].pop(task_number)
     gdata.update(data)
+    try:
+        bot.delete_message(user_id, message_to_d_id)
+    except telebot.apihelper.ApiTelegramException:
+        pass
     bot.send_message(user_id, "Успешно!")
     show_menu(chat_id, user_id)
 
 
 if __name__ == "__main__":
-    task = Thread(target=watch_dog)
-    task.start()
     while True:
         try:
+            task = Thread(target=watch_dog)
+            task.start()
             bot.polling(none_stop=True)
         except Exception as e:
+            task.stopped = True
             bot.send_message(316490607, e)
             sleep(1)
 
