@@ -265,7 +265,7 @@ def watch_dog():
                             gdata.update(data)
 
             sleep(5)
-        except RuntimeError  as e:
+        except RuntimeError as e:
             print(e)
             sleep(5)
 
@@ -710,7 +710,6 @@ def on_task_complete(query):
         if (tasktime - now).seconds < 60*60:
             bot.answer_callback_query(query.id, text="До дедлайна меньше часа. "
                                                      "С вас будут списаны 2 единицы рейтинга..", show_alert=True)
-            data["groups"][chat_id]["users"][user_id]["tasks"].pop(task_number)
             score = data["groups"][chat_id]["users"][user_id]["score"]
             bot.send_message(user_id, f"Ваш рейтинг теперь равен _{score} - 2_ = _{score - 2}_\n"
                                       f"_(за удаление задачи)_", parse_mode=MKD)
@@ -733,31 +732,34 @@ def on_getting_proof(message, _chat_id, _task, task_number, message_to_d_id):
     data = gdata.load()
     channel_id = "@" + data["groups"][chat_id]["channel"]
     tz = str(data["groups"][chat_id]["users"][user_id]["t_zone"])
-
-    if not message.photo:
-        raise NotAPhotoError
-
-    file_id = message.photo[0].file_id
-    p_msg = bot.send_photo(channel_id, caption=f"*Название:*\n{task_obj['task_name']}\n\n"
-                                               f"*Описание:*_\n{task_obj['task_description']}_\n\n"
-                                               f"*Доказательство:\n*_{task_obj['task_proof_description']}_",
-                           photo=file_id, parse_mode=MKD)
-    poll = bot.send_poll(channel_id, question="\/\/\/", options=['👍', '👎'])
-    data["groups"][chat_id]["tasks"].append({
-        "poll_id": poll.message_id,
-        "photo_id": p_msg.message_id,
-        "time": now_time(t_zone=int(tz)).strftime(time_stamp),
-        "user_id": user_id,
-        "channel_id": str(p_msg.chat.id)
-    })
-    data["groups"][chat_id]["users"][user_id]["tasks"].pop(task_number)
-    gdata.update(data)
     try:
-        bot.delete_message(user_id, message_to_d_id)
-    except telebot.apihelper.ApiTelegramException:
-        pass
-    bot.send_message(user_id, "Успешно!")
-    show_menu(chat_id, user_id)
+        if not message.photo:
+            raise NotAPhotoError
+
+        file_id = message.photo[0].file_id
+        p_msg = bot.send_photo(channel_id, caption=f"*Название:*\n{task_obj['task_name']}\n\n"
+                                                   f"*Описание:*_\n{task_obj['task_description']}_\n\n"
+                                                   f"*Доказательство:\n*_{task_obj['task_proof_description']}_",
+                               photo=file_id, parse_mode=MKD)
+        poll = bot.send_poll(channel_id, question="\/\/\/", options=['👍', '👎'])
+        data["groups"][chat_id]["tasks"].append({
+            "poll_id": poll.message_id,
+            "photo_id": p_msg.message_id,
+            "time": now_time(t_zone=int(tz)).strftime(time_stamp),
+            "user_id": user_id,
+            "channel_id": str(p_msg.chat.id)
+        })
+        data["groups"][chat_id]["users"][user_id]["tasks"].pop(task_number)
+        gdata.update(data)
+        try:
+            bot.delete_message(user_id, message_to_d_id)
+        except telebot.apihelper.ApiTelegramException:
+            pass
+        bot.send_message(user_id, "Успешно!")
+        show_menu(chat_id, user_id)
+    except NotAPhotoError:
+        bot.send_message(user_id, "Ошибка! Попробуйте еще раз.")
+        show_menu(chat_id, user_id)
 
 
 if __name__ == "__main__":
@@ -768,6 +770,6 @@ if __name__ == "__main__":
             bot.polling(none_stop=True)
         except Exception as e:
             task.stopped = True
-            bot.send_message(316490607, e)
+            bot.send_message(316490607, str(type(e))+str(e))
             sleep(1)
 
